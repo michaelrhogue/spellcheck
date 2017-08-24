@@ -1,0 +1,130 @@
+#!/bin/bash
+
+dict=$1
+inputfile=$2
+half=2
+misspells=()
+
+function calcLine(){
+	num1=$1
+	num2=$2
+	sum=$((num1 + num2))
+	divis=$((sum/half))
+	echo $divis
+}
+
+function findWord(){
+	wordToFind=$(echo $1 | sed 's/[\.,\;\?\"\!\)]$//' | sed 's/^[\"\(]//')
+	dict=$2
+	start=$3
+	end=$4
+
+	#TODO: This is supposed to add recursion if the word is hyphenated, but doesn't appear to be working
+	if [[ "wordToFind" == *"-"* ]]; then
+		IFS='-' read -r -a words <<< "$wordToFind"
+		for w in "${array[@]}"
+		do
+		    echo $(findWord "$w" "$dict" "$startline" "$endline")
+		done
+		return 0
+	fi
+
+	if [[ $start -eq $end ]] || [[ $((start + 1)) -eq $end ]]; then
+		if [[ $wordToFind != $start ]]; then
+			echo "$wordToFind not found; start $start"
+			return 1
+		fi
+	fi
+
+	readLine=$(calcLine "$start" "$end")
+	wordD=$(sed -n $readLine"p" $dict)
+
+	if [[ "$wordToFind" == "$wordD" ]]; then
+		echo "found"
+		return 0
+	elif [[ "$wordToFind" < "$wordD" ]]; then
+		echo "lower grouping"
+		return 0
+	else
+		echo "upper grouping"
+		return 0
+	fi
+}
+
+# This function will be too simple to be very accurate
+function checkProperName(){
+	word=$1
+	firstcap=0
+	capTillPunt=0
+
+	if [[ $word[0] =~ [A-Z] ]];then
+		firstcap=1
+	fi
+
+	while read -n1 character; do
+	    if [[ "$character" =~ [:punct:] ]];then
+	    	capTillPunt=1
+	    	break;
+		elif [[ "$character" =~ [^A-Z] ]]; then
+			capTillPunt=0
+			break;
+		fi
+	done < <(echo -n "$word")
+
+	if [[ $firstcap -eq 1 ]] || [[ $capTillPunt -eq 1 ]]; then
+		echo 1
+	else
+		echo 0
+	fi
+}
+
+function suggest(){
+	misspell=$1
+	lin=$2
+	sub=10
+	show=20
+	#TODO: The line math seems to be off in some cases
+	line=$((lin-sub))
+	line=$(echo $line | sed 's/^-.*/1/')
+	#TODO": Got negative integers.  Need to account for zero as well
+	dictdata=($(sed -n -e "$line,$show p" ./$dict))
+	
+	#TODO: Each word in scope from the dictionary should be matched to a regular expression
+	# 		It should contain all the letters from the dictionary word in a character class.
+	#		The length of the match should be compared to the misspelled word.
+	#		If the number of characters in the match is ~75% the length of the misspelled word, it should be suggested. 
+	echo "Perhaps you meant: $dictdata"
+}
+
+for word in $(< $inputfile)
+do
+	properName=$(checkProperName "$word")
+	word="${word,,}"
+	startline=0
+	endline=$(wc -l < $1)
+	result=$(findWord "$word" "$dict" "$startline" "$endline")
+	while [[ $result == *"grouping"* ]]
+	do
+		if [[ $result == "lower grouping" ]]; then
+			endline=$(calcLine "$startline" "$endline")
+		else
+			startline=$(calcLine "$startline" "$endline")
+		fi
+		
+		result=$(findWord "$word" "$dict" "$startline" "$endline")	
+	done
+	
+	if [[ $result != "found" ]]; then
+		word=$(echo $result | sed 's/ not found; start [0-9]*//')
+		suggestLine=$(echo $result | grep -o '[0-9]*')
+
+		if [[ $properName -eq 1 ]]; then
+			echo "NOTE: $word may be a propper name, but we haven't developed this enough to know for sure."
+		fi
+		
+		echo "$word"
+		grep --color -in -C 0 "[- ]$word[- ]" "./$inputfile"
+		echo $(suggest "$word" "$suggestLine")
+		echo "_________________________________________________________________________________"
+	fi
+done
